@@ -13,6 +13,8 @@ struct Parameters
 {
     bool PrintHelp = false;
     int Timeout = -1; // unlimited
+    int Count = 1;
+    bool SkipFirst = true;
     std::string Executable;
     std::vector<std::string> Params;
 };
@@ -25,7 +27,9 @@ public:
     {
         desc_.add_options()
             ("help,H", "produce help message")
-            ("timeout", po::value<int>()->default_value(-1), "set process timeout");
+            ("timeout", po::value<int>()->default_value(-1), "set process timeout")
+            ("count,C", po::value<int>()->default_value(1), "number of samples (process runs)")
+            ("drop-first", po::value<bool>()->default_value(true), "if multiples samples are collected, skip first run");
 
         p_.add("executable", 1);
         p_.add("parameters", -1);
@@ -58,6 +62,8 @@ public:
         return Parameters{
             false, // help
             vm["timeout"].as<int>(),
+            vm["count"].as<int>(),
+            vm["drop-first"].as<bool>(),
             vm["executable"].as<std::string>(),
             params,
         };
@@ -90,28 +96,43 @@ int main(int argc, char** argv)
             return 0;
         }
 
-        auto start = std::chrono::high_resolution_clock::now();
+        std::chrono::milliseconds total(0);
+        int runs = 0;
 
-        bp::child process(params.Executable, bp::args(params.Params), bp::std_out > bp::null, bp::std_err > bp::null);
+        for (int i = 0; i < params.Count; ++i)
+        {
+            auto start = std::chrono::high_resolution_clock::now();
 
-        if (params.Timeout < 0)
-        {
-            process.wait(); // infinite wait
-        }
-        else
-        {
-            auto timeout = std::chrono::seconds(params.Timeout);
-            if (!process.wait_for(timeout))
+            bp::child process(params.Executable, bp::args(params.Params), bp::std_out > bp::null, bp::std_err > bp::null);
+
+            if (params.Timeout < 0)
             {
-                process.terminate();
-                std::cout << "Timeout!\n";
-                return 0;
+                process.wait(); // infinite wait
             }
+            else
+            {
+                auto timeout = std::chrono::seconds(params.Timeout);
+                if (!process.wait_for(timeout))
+                {
+                    process.terminate();
+                    std::cout << "Run #" << i + 1 << " timeout!\n";
+                    return 0;
+                    
+                }
+            }
+
+            auto duration = std::chrono::high_resolution_clock::now() - start;
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+            std::cout << "Run #" << i + 1 << " took " << ms.count() << "ms\n";
+
+            if (params.Count > 1 && i == 0 && params.SkipFirst)
+                continue; // skip first run
+
+            ++runs;
+            total += ms;
         }
 
-        auto duration = std::chrono::high_resolution_clock::now() - start;
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
-        std::cout << "Time " << ms.count()  <<"ms\n";
+        std::cout << "\nTotal (" << runs << " runs) " << total.count() / static_cast<double>(runs) << "ms\n";
     }
     catch (const std::exception& e)
     {
