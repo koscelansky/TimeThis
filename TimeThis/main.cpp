@@ -15,6 +15,7 @@ struct Parameters
     int Timeout = -1; // unlimited
     int Count = 1;
     bool SkipFirst = true;
+    std::string StdOut; // empty redirect to null
     std::string Executable;
     std::vector<std::string> Params;
 };
@@ -29,7 +30,8 @@ public:
             ("help,H", "produce help message")
             ("timeout", po::value<int>()->default_value(-1), "set process timeout")
             ("count,C", po::value<int>()->default_value(1), "number of samples (process runs)")
-            ("drop-first", po::value<bool>()->default_value(true), "if multiples samples are collected, skip first run");
+            ("drop-first", po::value<bool>()->default_value(true), "if multiples samples are collected, skip first run")
+            ("stdout", po::value<std::string>()->default_value(""), "redirect stdout to specified file");
 
         p_.add("executable", 1);
         p_.add("parameters", -1);
@@ -64,6 +66,7 @@ public:
             vm["timeout"].as<int>(),
             vm["count"].as<int>(),
             vm["drop-first"].as<bool>(),
+            vm["stdout"].as<std::string>(),
             vm["executable"].as<std::string>(),
             params,
         };
@@ -103,7 +106,12 @@ int main(int argc, char** argv)
         {
             auto start = std::chrono::high_resolution_clock::now();
 
-            bp::child process(params.Executable, bp::args(params.Params), bp::std_out > bp::null, bp::std_err > bp::null);
+            bp::child process = [&]() {
+                if (params.StdOut.empty())
+                    return bp::child(params.Executable, bp::args(params.Params), bp::std_out > bp::null, bp::std_err > bp::null);
+                else
+                    return bp::child(params.Executable, bp::args(params.Params), bp::std_out > params.StdOut, bp::std_err > bp::null);
+            }(); 
 
             if (params.Timeout < 0)
             {
